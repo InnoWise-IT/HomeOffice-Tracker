@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HomeOffice Self-Tracker</title>
+<style>
+  body {
+    font-family: sans-serif;
+    padding: 2rem;
+    max-width: 600px;
+    margin: auto;
+  }
+  input, button, select {
+    padding: 0.5rem;
+    margin: 0.5rem 0;
+    box-sizing: border-box;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 0.5rem;
+    text-align: left;
+  }
+  .status-ok { color: green; }
+  .status-over { color: red; }
+  .icon-button {
+    cursor: pointer;
+    font-size: 1.5rem;
+    border: 1px solid #ccc;
+    background: none;
+    padding: 0.3rem 0.6rem;
+    margin-right: 1rem;
+    vertical-align: middle;
+  }
+  .icon-button.selected {
+    background-color: #007bff;
+    color: white;
+    border-color: #0056b3;
+    border-radius: 4px;
+  }
+  #contractualHoPercentageInput {
+    width: 70px;
+    margin-left: 0.5rem;
+  }
+  #monthFilter {
+    margin-left: 0.5rem;
+    min-width: 150px;
+  }
+  .filter-container {
+      margin-top: 1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+  }
+  .filter-container label {
+      margin-right: 0.5rem;
+  }
+  .info-offline {
+    background-color: #fff3cd;
+    border: 1px solid #ffeeba;
+    color: #856404;
+    padding: 0.75rem 1.25rem;
+    margin-bottom: 1rem;
+    border-radius: 0.25rem;
+    font-size: 0.9rem;
+  }
+  #csvFileInput {
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+  <h1>🏠 HomeOffice Self-Tracker</h1>
+
+  <div class="info-offline">
+    <strong>Hinweis:</strong> InnoWiseIT speichert keine Daten.<br>Alle Ihre Daten werden lokal im App- Cache gehalten.<br>Wichtig! Erstellen Sie regeläßig eine Datensicherung.
+  </div>
+
+  <label for="date">Datum:</label><br />
+  <input type="date" id="date" /><br />
+
+  <label>Arbeitsort:</label><br />
+  <button id="btnHO" class="icon-button" title="Homeoffice" aria-pressed="false">🏠</button>
+  <button id="btnOffice" class="icon-button" title="Büro" aria-pressed="false">🏢</button>
+  <button id="btnHalf" class="icon-button" title="Halbtags" aria-pressed="false">🕑</button>
+
+  <br />
+
+  <button onclick="addEntry()">Eintrag hinzufügen</button>
+  <br>  
+  <button onclick="copyOverviewToClipboard()">📋 Übersicht in Zwischenablage kopieren</button>
+  <button onclick="document.getElementById('csvFileInput').click()">📤 Übersicht aus csv oder txt importieren</button> 
+  <input type="file" id="csvFileInput" accept=".csv,.txt" onchange="importCSV(event)"> 
+  <button onclick="toggleOverview()">📅 Übersicht anzeigen/ausblenden</button>
+
+  <div class="filter-container">
+    <div>
+        <label for="contractualHoPercentageInput">Ihr HO-Anteil (%):</label>
+        <input type="number" id="contractualHoPercentageInput" min="0" max="100" step="1" value="50">
+    </div>
+    <div style="margin-left: auto;">
+        <label for="monthFilter">Monat filtern:</label>
+        <select id="monthFilter">
+            <option value="all">Alle Monate</option>
+        </select>
+    </div>
+  </div>
+
+
+  <div id="overview" style="display:none;">
+    <h2>📅 Übersicht</h2>
+    <table>
+      <thead>
+        <tr><th>Datum</th><th>Arbeitsort</th></tr>
+      </thead>
+      <tbody id="entryList"></tbody>
+    </table>
+  </div>
+
+  <h2 style="margin-top:1rem;">📊 Auswertung <span id="evaluationPeriod"></span></h2>
+  <p>Arbeitstage gesamt (erfasst): <span id="totalDays">0</span></p>
+  <p>Homeoffice-Tage (ganze): <span id="hoDays">0</span></p>
+  <p>Büro-Tage (ganze): <span id="officeDays">0</span></p>
+  <p>Halbtags-Tage: <span id="halfDays">0</span></p>
+  <p>Homeoffice-Anteil: <span id="hoRatio">0%</span></p>
+  <p>Büro-Anteil: <span id="officeRatio">0%</span></p>
+  <p>Status (HO-Anteil): <span id="status" class="status-ok">✅ OK</span></p>
+
+<script>
+  // JavaScript-Teil bleibt unverändert zur vorherigen Version
+  // mit der copyOverviewToClipboard Funktion
+
+  const dateInput = document.getElementById('date');
+  const btnHO = document.getElementById('btnHO');
+  const btnOffice = document.getElementById('btnOffice');
+  const btnHalf = document.getElementById('btnHalf');
+  const contractualHoPercentageInput = document.getElementById('contractualHoPercentageInput');
+  const monthFilterSelect = document.getElementById('monthFilter');
+  const evaluationPeriodSpan = document.getElementById('evaluationPeriod');
+  const csvFileInput = document.getElementById('csvFileInput');
+  const STORAGE_KEY = 'hoTrackerData';
+  const CONTRACTUAL_HO_KEY = 'hoTrackerContractualHO';
+  const SELECTED_MONTH_KEY = 'hoTrackerSelectedMonth';
+  let selectedLocation = null;
+  let allLoadedData = [];
+
+  dateInput.valueAsDate = new Date();
+
+  btnHO.addEventListener('click', () => selectLocation('ja'));
+  btnOffice.addEventListener('click', () => selectLocation('nein'));
+  btnHalf.addEventListener('click', () => selectLocation('halb'));
+
+  contractualHoPercentageInput.addEventListener('change', () => {
+    saveContractualHoPercentage();
+    updateDisplay();
+  });
+
+  monthFilterSelect.addEventListener('change', () => {
+    localStorage.setItem(SELECTED_MONTH_KEY, monthFilterSelect.value);
+    updateDisplay();
+  });
+
+  function selectLocation(loc) {
+    selectedLocation = loc;
+    btnHO.classList.toggle('selected', loc === 'ja');
+    btnHO.setAttribute('aria-pressed', loc === 'ja' ? 'true' : 'false');
+    btnOffice.classList.toggle('selected', loc === 'nein');
+    btnOffice.setAttribute('aria-pressed', loc === 'nein' ? 'true' : 'false');
+    btnHalf.classList.toggle('selected', loc === 'halb');
+    btnHalf.setAttribute('aria-pressed', loc === 'halb' ? 'true' : 'false');
+  }
+  selectLocation('ja');
+
+  function loadContractualHoPercentage() {
+    const storedPercentage = localStorage.getItem(CONTRACTUAL_HO_KEY);
+    if (storedPercentage !== null) {
+      contractualHoPercentageInput.value = storedPercentage;
+    }
+    let value = parseInt(contractualHoPercentageInput.value, 10);
+    if (isNaN(value) || value < 0 || value > 100) {
+        value = 50; contractualHoPercentageInput.value = value;
+    }
+    return value;
+  }
+
+  function saveContractualHoPercentage() {
+    let value = parseInt(contractualHoPercentageInput.value, 10);
+    if (isNaN(value) || value < 0) value = 0;
+    else if (value > 100) value = 100;
+    contractualHoPercentageInput.value = value;
+    localStorage.setItem(CONTRACTUAL_HO_KEY, value.toString());
+  }
+  loadContractualHoPercentage();
+
+  function loadDataLocal() {
+    try {
+      const json = localStorage.getItem(STORAGE_KEY);
+      if (!json) return [];
+      const data = JSON.parse(json);
+      if (!Array.isArray(data)) return [];
+      return data.filter(e => e.date && typeof e.date === 'string' && typeof e.isHO === 'string');
+    } catch {
+      console.warn("Konnte lokale Daten nicht laden oder parsen."); return [];
+    }
+  }
+  function saveDataLocal(data) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }
+
+  function loadAllDataAndUpdateFilters() { 
+    allLoadedData = loadDataLocal().sort((a, b) => a.date.localeCompare(b.date));
+    console.log("Lokale Daten geladen.");
+    populateMonthFilter();
+    updateDisplay();
+  }
+
+  function addEntry() { 
+    const date = dateInput.value;
+    if (!date) { alert('Bitte ein Datum auswählen.'); return; }
+    if (!selectedLocation) { alert('Bitte Arbeitsort auswählen (🏠, 🏢 oder 🕑).'); return; }
+    allLoadedData = allLoadedData.filter(e => e.date !== date);
+    allLoadedData.push({ date: date, isHO: selectedLocation });
+    allLoadedData.sort((a, b) => a.date.localeCompare(b.date));
+    saveDataLocal(allLoadedData);
+    alert('Eintrag lokal gespeichert.');
+    populateMonthFilter();
+    updateDisplay();
+  }
+
+  function populateMonthFilter() {
+    const existingMonths = new Set();
+    allLoadedData.forEach(entry => { existingMonths.add(entry.date.substring(0, 7)); });
+    const sortedMonths = Array.from(existingMonths).sort().reverse();
+    const currentFilterValue = monthFilterSelect.value;
+    while (monthFilterSelect.options.length > 1) { monthFilterSelect.remove(1); }
+    sortedMonths.forEach(monthYYYYMM => {
+        const option = document.createElement('option');
+        option.value = monthYYYYMM;
+        const [year, month] = monthYYYYMM.split('-');
+        const dateForFormatting = new Date(year, parseInt(month) - 1, 1);
+        option.textContent = dateForFormatting.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+        monthFilterSelect.appendChild(option);
+    });
+    if (Array.from(monthFilterSelect.options).some(opt => opt.value === currentFilterValue)) {
+        monthFilterSelect.value = currentFilterValue;
+    } else {
+        monthFilterSelect.value = "all";
+    }
+  }
+
+  function getFilteredData() {
+    const selectedMonth = monthFilterSelect.value;
+    if (selectedMonth === "all" || !selectedMonth) {
+      evaluationPeriodSpan.textContent = "(Alle Einträge)";
+      return allLoadedData;
+    } else {
+      const [year, monthNum] = selectedMonth.split('-');
+      const monthName = new Date(year, parseInt(monthNum) - 1, 1).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+      evaluationPeriodSpan.textContent = `(${monthName})`;
+      return allLoadedData.filter(entry => entry.date.startsWith(selectedMonth));
+    }
+  }
+
+  function updateDisplay() { 
+    const dataToDisplay = getFilteredData();
+    const contractualHoLimitPercentage = loadContractualHoPercentage();
+    const contractualHoLimitDecimal = contractualHoLimitPercentage / 100;
+    const tbody = document.getElementById('entryList');
+    tbody.innerHTML = dataToDisplay.map(entry => `
+      <tr>
+        <td>${new Date(entry.date).toLocaleDateString('de-DE', {day: '2-digit', month: '2-digit', year: 'numeric'})}</td>
+        <td>${entry.isHO === 'ja' ? '🏠 Homeoffice' : entry.isHO === 'nein' ? '🏢 Büro' : '🕑 Halbtags'}</td>
+      </tr>
+    `).join('');
+    const totalEntries = dataToDisplay.length;
+    const pureHoCount = dataToDisplay.filter(e => e.isHO === 'ja').length;
+    const pureOfficeCount = dataToDisplay.filter(e => e.isHO === 'nein').length;
+    const halfDayCount = dataToDisplay.filter(e => e.isHO === 'halb').length;
+    const effectiveHoDays = pureHoCount + (halfDayCount * 0.5);
+    const effectiveOfficeDays = pureOfficeCount + (halfDayCount * 0.5);
+    const hoRatio = totalEntries > 0 ? effectiveHoDays / totalEntries : 0;
+    const officeRatio = totalEntries > 0 ? effectiveOfficeDays / totalEntries : 0;
+    document.getElementById('totalDays').textContent = totalEntries;
+    document.getElementById('hoDays').textContent = pureHoCount;
+    document.getElementById('officeDays').textContent = pureOfficeCount;
+    document.getElementById('halfDays').textContent = halfDayCount;
+    document.getElementById('hoRatio').textContent = (hoRatio * 100).toFixed(1) + '%';
+    document.getElementById('officeRatio').textContent = (officeRatio * 100).toFixed(1) + '%';
+    const statusEl = document.getElementById('status');
+    if (totalEntries === 0) {
+        statusEl.textContent = 'Keine Daten für Auswahl'; statusEl.className = '';
+    } else if (hoRatio > contractualHoLimitDecimal) {
+      statusEl.textContent = `❌ Über ${contractualHoLimitPercentage} %`; statusEl.className = 'status-over';
+    } else {
+      statusEl.textContent = '✅ OK'; statusEl.className = 'status-ok';
+    }
+  }
+
+  function toggleOverview() {
+    const overview = document.getElementById('overview');
+    const isHidden = overview.style.display === 'none' || overview.style.display === '';
+    if (isHidden) { overview.style.display = 'block'; }
+    else { overview.style.display = 'none'; }
+  }
+
+  
+  function copyOverviewToClipboard() {
+    const dataToCopy = getFilteredData();
+
+    if (!dataToCopy || dataToCopy.length === 0) {
+      alert('Keine Daten zum Kopieren für den ausgewählten Zeitraum vorhanden.');
+      return;
+    }
+
+    let textOutput = "Datum\tArbeitsort\n"; 
+
+    const sortedData = [...dataToCopy].sort((a, b) => a.date.localeCompare(b.date));
+
+    sortedData.forEach(entry => {
+      let dateFormatted;
+      try {
+        const [year, month, day] = entry.date.split('-');
+        dateFormatted = `${day.padStart(2, '0')}.${month.padStart(2, '0')}.${year}`;
+      } catch (error) {
+        dateFormatted = entry.date;
+      }
+      const location = entry.isHO === 'ja' ? 'Homeoffice' : entry.isHO === 'nein' ? 'Büro' : 'Halbtags';
+      textOutput += `${dateFormatted}\t${location}\n`; 
+    });
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textOutput)
+        .then(() => {
+          alert('Übersicht wurde zur Datensicherung in die Zwischenablage kopiert!\nSie können die Daten jetzt in einen Texteditor Ihrer Wahl einfügen und als CSV oder TXT speichern, um diese dann bei Bedarf über die Importfunktion wiederherstellen zu können.'); // <-- HIER ANPASSEN
+        })
+        .catch(err => {
+          console.error('Fehler beim Kopieren in die Zwischenablage: ', err);
+          fallbackCopyTextToClipboard(textOutput); 
+        });
+    } else {
+      fallbackCopyTextToClipboard(textOutput);
+    }
+  }
+
+  function fallbackCopyTextToClipboard(text) {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.top = "0";
+    textArea.style.left = "0";
+    textArea.style.position = "fixed";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+      const successful = document.execCommand('copy');
+      const msg = successful ? 'erfolgreich' : 'nicht erfolgreich';
+      alert(`Übersicht wurde ${msg} in die Zwischenablage kopiert (Fallback).\nSie können die Daten jetzt in einen Texteditor einfügen und als CSV oder TXT speichern, um diese dann bei Bedarf über die Importfunktion wiederherstellen zu können.`);
+    } catch (err) {
+      console.error('Fallback: Fehler beim Kopieren: ', err);
+      alert('Fehler beim Kopieren. Bitte versuchen Sie es manuell.');
+    }
+    document.body.removeChild(textArea);
+  }
+  
+  function importCSV(event) { 
+    const file = event.target.files[0];
+    if (!file) {
+      return;
+    }
+    if (!confirm("Möchten Sie wirklich alle vorhandenen Daten durch den Inhalt dieser CSV-Datei ersetzen? Dieser Vorgang kann nicht rückgängig gemacht werden.")) {
+        csvFileInput.value = '';
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = function(e) { 
+      const text = e.target.result;
+      const importedData = [];
+      const lines = text.split(/\r\n|\n/);
+      if (lines.length < 2 || !lines[0].toLowerCase().includes('datum') || !lines[0].toLowerCase().includes('arbeitsort')) {
+          alert('Ungültiges CSV-Format oder keine Datenzeilen vorhanden. Die erste Zeile sollte "Datum;Arbeitsort" enthalten.');
+          csvFileInput.value = '';
+          return;
+      }
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === "") continue;
+        const parts = line.split('\t'); 
+        if (parts.length === 2) {
+          const dateStr = parts[0].trim();
+          const locationStr = parts[1].trim().toLowerCase();
+          const dateParts = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+          if (!dateParts) {
+              console.warn(`Ungültiges Datumsformat in CSV-Zeile ${i + 1}: ${dateStr}. Erwartet DD.MM.YYYY`);
+              continue;
+          }
+          const day = dateParts[1].padStart(2, '0');
+          const month = dateParts[2].padStart(2, '0');
+          const year = dateParts[3];
+          const isoDate = `${year}-${month}-${day}`;
+          let isHOValue;
+          if (locationStr === 'homeoffice') isHOValue = 'ja';
+          else if (locationStr === 'büro') isHOValue = 'nein';
+          else if (locationStr === 'halbtags') isHOValue = 'halb';
+          else { console.warn(`Unbekannter Arbeitsort in CSV-Zeile ${i + 1}: ${parts[1]}.`); continue; }
+          importedData.push({ date: isoDate, isHO: isHOValue });
+        } else {
+            console.warn(`Ungültige Spaltenanzahl in CSV-Zeile ${i + 1}: ${line}. Erwartet 2 Spalten.`);
+        }
+      }
+      if (importedData.length > 0) {
+        allLoadedData = importedData.sort((a, b) => a.date.localeCompare(b.date));
+        saveDataLocal(allLoadedData); 
+        populateMonthFilter();
+        updateDisplay(); 
+        alert(`${importedData.length} Einträge erfolgreich importiert und gespeichert.`);
+      } else {
+        alert('Keine validen Daten in der CSV-Datei gefunden oder Import abgebrochen.');
+      }
+      csvFileInput.value = '';
+    };
+    reader.onerror = function() {
+        alert('Fehler beim Lesen der Datei.');
+        csvFileInput.value = '';
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+
+  (() => {
+    const storedMonth = localStorage.getItem(SELECTED_MONTH_KEY);
+    if (storedMonth) { monthFilterSelect.value = storedMonth; }
+    loadAllDataAndUpdateFilters(); 
+  })();
+
+</script>
+
+</body>
+</html>
